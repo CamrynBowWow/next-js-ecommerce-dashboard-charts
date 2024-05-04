@@ -1,11 +1,11 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import db from '@/db/db';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/formatters';
-import { resolve } from 'path';
 import { OrdersByDayChart } from './_components/charts/OrdersByDayChart';
 import { Prisma } from '@prisma/client';
 import { eachDayOfInterval, interval, startOfDay, subDays } from 'date-fns';
 import { ReactNode } from 'react';
+import { UsersByDayChart } from './_components/charts/UsersByDayChart';
 
 async function getSalesData(createdAfter: Date | null, createdBefore: Date | null) {
 	const createdAtQuery: Prisma.OrderWhereInput['createdAt'] = {};
@@ -49,15 +49,43 @@ async function getSalesData(createdAfter: Date | null, createdBefore: Date | nul
 	};
 }
 
-async function getUserData() {
-	const [userCount, orderData] = await Promise.all([
+async function getUserData(createdAfter: Date | null, createdBefore: Date | null) {
+	const createdAtQuery: Prisma.UserWhereInput['createdAt'] = {};
+
+	if (createdAfter) createdAtQuery.gte = createdAfter;
+	if (createdBefore) createdAtQuery.lte = createdBefore;
+
+	const [userCount, orderData, chartData] = await Promise.all([
 		db.user.count(),
 		db.order.aggregate({
 			_sum: { pricePaidInCents: true },
 		}),
+		db.user.findMany({
+			select: { createdAt: true },
+			where: { createdAt: createdAtQuery },
+			orderBy: { createdAt: 'asc' },
+		}),
 	]);
 
+	const dayArray = eachDayOfInterval(
+		interval(createdAfter || startOfDay(chartData[0].createdAt), createdBefore || new Date())
+	).map((date) => {
+		return {
+			date: formatDate(date),
+			totalUsers: 0,
+		};
+	});
+
 	return {
+		chartData: chartData.reduce((data, user) => {
+			const formattedData = formatDate(user.createdAt);
+			const entry = dayArray.find((day) => day.date === formattedData);
+
+			if (entry == null) return data;
+
+			entry.totalUsers += 1;
+			return data;
+		}, dayArray),
 		userCount,
 		averageValuePerUser:
 			userCount === 0 ? 0 : (orderData._sum.pricePaidInCents || 0) / userCount / 100,
@@ -76,7 +104,7 @@ async function getProductData() {
 export default async function AdminDashboard() {
 	const [salesData, userData, productData] = await Promise.all([
 		getSalesData(subDays(new Date(), 6), new Date()),
-		getUserData(),
+		getUserData(subDays(new Date(), 5), new Date()),
 		getProductData(),
 	]);
 
@@ -102,6 +130,9 @@ export default async function AdminDashboard() {
 			<div className='grid grid-cols-1 lg:grid-cols-2 gap-4 mt-8'>
 				<ChartCard title='Total Sales'>
 					<OrdersByDayChart data={salesData.chartData} />
+				</ChartCard>
+				<ChartCard title='New Customers'>
+					<UsersByDayChart data={userData.chartData} />
 				</ChartCard>
 			</div>
 		</>
