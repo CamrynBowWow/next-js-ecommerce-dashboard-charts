@@ -1,16 +1,49 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import db from '@/db/db';
-import { formatCurrency, formatNumber } from '@/lib/formatters';
+import { formatCurrency, formatDate, formatNumber } from '@/lib/formatters';
 import { resolve } from 'path';
 import { OrdersByDayChart } from './_components/charts/OrdersByDayChart';
+import { Prisma } from '@prisma/client';
+import { eachDayOfInterval, interval, startOfDay, subDays } from 'date-fns';
+import { ReactNode } from 'react';
 
-async function getSalesData() {
-	const data = await db.order.aggregate({
-		_sum: { pricePaidInCents: true },
-		_count: true,
+async function getSalesData(createdAfter: Date | null, createdBefore: Date | null) {
+	const createdAtQuery: Prisma.OrderWhereInput['createdAt'] = {};
+
+	if (createdAfter) createdAtQuery.gte = createdAfter;
+	if (createdBefore) createdAtQuery.lte = createdBefore;
+
+	const [data, chartData] = await Promise.all([
+		db.order.aggregate({
+			_sum: { pricePaidInCents: true },
+			_count: true,
+		}),
+		await db.order.findMany({
+			select: { createdAt: true, pricePaidInCents: true },
+			where: { createdAt: createdAtQuery },
+			orderBy: { createdAt: 'asc' },
+		}),
+	]);
+
+	const dayArray = eachDayOfInterval(
+		interval(createdAfter || startOfDay(chartData[0].createdAt), createdBefore || new Date())
+	).map((date) => {
+		return {
+			date: formatDate(date),
+			totalSales: 0,
+		};
 	});
 
 	return {
+		chartData: chartData.reduce((data, order) => {
+			const formattedData = formatDate(order.createdAt);
+			const entry = dayArray.find((day) => day.date === formattedData);
+
+			if (entry == null) return data;
+
+			entry.totalSales += order.pricePaidInCents / 100;
+			return data;
+		}, dayArray),
 		amount: (data._sum.pricePaidInCents || 0) / 100,
 		numberOfSales: data._count,
 	};
@@ -42,7 +75,7 @@ async function getProductData() {
 
 export default async function AdminDashboard() {
 	const [salesData, userData, productData] = await Promise.all([
-		getSalesData(),
+		getSalesData(subDays(new Date(), 6), new Date()),
 		getUserData(),
 		getProductData(),
 	]);
@@ -67,14 +100,9 @@ export default async function AdminDashboard() {
 				/>
 			</div>
 			<div className='grid grid-cols-1 lg:grid-cols-2 gap-4 mt-8'>
-				<Card>
-					<CardHeader>
-						<CardTitle>Total Sales</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<OrdersByDayChart />
-					</CardContent>
-				</Card>
+				<ChartCard title='Total Sales'>
+					<OrdersByDayChart data={salesData.chartData} />
+				</ChartCard>
 			</div>
 		</>
 	);
@@ -96,6 +124,22 @@ function DashboardCard({ title, subtitle, body }: DashboardCardProps) {
 			<CardContent>
 				<p>{body}</p>
 			</CardContent>
+		</Card>
+	);
+}
+
+type ChartCardProps = {
+	title: string;
+	children: ReactNode;
+};
+
+function ChartCard({ title, children }: ChartCardProps) {
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle>{title}</CardTitle>
+			</CardHeader>
+			<CardContent>{children}</CardContent>
 		</Card>
 	);
 }

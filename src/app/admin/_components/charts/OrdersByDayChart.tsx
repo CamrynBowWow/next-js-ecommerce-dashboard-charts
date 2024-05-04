@@ -11,13 +11,11 @@ import {
 	YAxis,
 } from 'recharts';
 
-const data = [
-	{ value: 12, date: '2024-12-12' },
-	{ value: 25, date: '2024-12-11' },
-	{ value: 5, date: '2024-12-10' },
-];
+type OrdersByDayChartProps = {
+	data: { date: string; totalSales: number }[];
+};
 
-export function OrdersByDayChart() {
+export function OrdersByDayChart({ data }: OrdersByDayChartProps) {
 	return (
 		<ResponsiveContainer width='100%' minHeight={300}>
 			<LineChart data={data}>
@@ -27,7 +25,7 @@ export function OrdersByDayChart() {
 				<Tooltip formatter={(value) => formatCurrency(value as number)} />
 				<Line
 					dot={false}
-					dataKey='value'
+					dataKey='totalSales'
 					type='monotone'
 					name='Total Sales'
 					stroke='hsl(var(--primary))'
