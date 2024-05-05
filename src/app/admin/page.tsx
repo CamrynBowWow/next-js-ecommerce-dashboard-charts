@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { eachDayOfInterval, interval, startOfDay, subDays } from 'date-fns';
 import { ReactNode } from 'react';
 import { UsersByDayChart } from './_components/charts/UsersByDayChart';
+import { RevenueByProductChart } from './_components/charts/RevenueByProductChart';
 
 async function getSalesData(createdAfter: Date | null, createdBefore: Date | null) {
 	const createdAtQuery: Prisma.OrderWhereInput['createdAt'] = {};
@@ -92,20 +93,47 @@ async function getUserData(createdAfter: Date | null, createdBefore: Date | null
 	};
 }
 
-async function getProductData() {
-	const [activeCount, inactiveCount] = await Promise.all([
+async function getProductData(createdAfter: Date | null, createdBefore: Date | null) {
+	const createdAtQuery: Prisma.OrderWhereInput['createdAt'] = {};
+
+	if (createdAfter) createdAtQuery.gte = createdAfter;
+	if (createdBefore) createdAtQuery.lte = createdBefore;
+
+	const [activeCount, inactiveCount, chartData] = await Promise.all([
 		db.product.count({ where: { isAvailableForPurchase: true } }),
 		db.product.count({ where: { isAvailableForPurchase: false } }),
+		db.product.findMany({
+			select: {
+				name: true,
+				orders: {
+					select: { pricePaidInCents: true },
+					where: { createdAt: createdAtQuery },
+				},
+			},
+		}),
 	]);
 
-	return { activeCount, inactiveCount };
+	return {
+		chartData: chartData
+			.map((product) => {
+				return {
+					name: product.name,
+					revenue: product.orders.reduce((sum, order) => {
+						return sum + order.pricePaidInCents / 100;
+					}, 0),
+				};
+			})
+			.filter((product) => product.revenue > 0),
+		activeCount,
+		inactiveCount,
+	};
 }
 
 export default async function AdminDashboard() {
 	const [salesData, userData, productData] = await Promise.all([
 		getSalesData(subDays(new Date(), 6), new Date()),
 		getUserData(subDays(new Date(), 5), new Date()),
-		getProductData(),
+		getProductData(subDays(new Date(), 6), new Date()),
 	]);
 
 	return (
@@ -133,6 +161,9 @@ export default async function AdminDashboard() {
 				</ChartCard>
 				<ChartCard title='New Customers'>
 					<UsersByDayChart data={userData.chartData} />
+				</ChartCard>
+				<ChartCard title='Revenue By Product'>
+					<RevenueByProductChart data={productData.chartData} />
 				</ChartCard>
 			</div>
 		</>
